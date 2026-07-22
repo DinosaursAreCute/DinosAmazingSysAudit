@@ -119,3 +119,21 @@ def write_default_config(path: Path) -> Path:
     with open(path, "w", encoding="utf-8") as fh:
         yaml.safe_dump(DEFAULTS, fh, sort_keys=False)
     return path
+
+
+def default_config_path() -> Path:
+    """Where to write a config if none was found on disk yet — matches
+    `audit-cli config init`'s default, regardless of root/non-root, so the
+    TUI settings screen and the CLI always agree on one canonical spot."""
+    return Path.home() / ".config" / "auditsys" / "config.yaml"
+
+
+def save_config(config: dict[str, Any], path: Path) -> Path:
+    """Persist `config` (minus internal `_`-prefixed bookkeeping keys) to
+    `path` as YAML. Used by the TUI settings screen so edits survive restart,
+    on top of being applied to the live in-memory config immediately."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clean = {k: v for k, v in config.items() if not k.startswith("_")}
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(clean, fh, sort_keys=False)
+    return path

@@ -112,7 +112,13 @@ python3 -m venv "$VENV_DIR"
 
 log "installing auditsys into the venv only"
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
-"$VENV_DIR/bin/pip" install "$SCRIPT_DIR"
+# --force-reinstall --no-deps: re-running this script after pulling a new
+# tarball must always pick up source changes, even if the package version
+# string didn't change. Dependencies (click/rich/textual/jinja2/pyyaml) are
+# left alone here since they rarely change and reinstalling them every run
+# is wasted work; drop --no-deps if a future update needs a new dependency.
+"$VENV_DIR/bin/pip" install --force-reinstall --no-deps "$SCRIPT_DIR"
+"$VENV_DIR/bin/pip" install "$SCRIPT_DIR" --quiet  # ensures deps are present without forcing their reinstall
 
 mkdir -p "$BIN_DIR"
 for cmd in audit-cli audit-tui; do
@@ -127,9 +133,36 @@ EOF
     log "installed wrapper: $wrapper -> $VENV_DIR/bin/$cmd"
 done
 
+RC_UPDATED=0
+
+add_path_to_rc() {
+    local rc_file="$1"
+    local marker="# added by auditsys installer"
+    [[ -f "$rc_file" ]] || touch "$rc_file"
+    if grep -qF "$marker" "$rc_file" 2>/dev/null; then
+        log "PATH entry already present in $rc_file — leaving it alone"
+        return
+    fi
+    {
+        echo ""
+        echo "$marker"
+        echo "export PATH=\"$BIN_DIR:\$PATH\""
+    } >> "$rc_file"
+    log "added $BIN_DIR to PATH in $rc_file"
+    RC_UPDATED=1
+}
+
 case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *) log "note: $BIN_DIR is not on your PATH — add 'export PATH=\"$BIN_DIR:\$PATH\"' to your shell rc" ;;
+    *":$BIN_DIR:"*)
+        log "$BIN_DIR already on PATH — nothing to add"
+        ;;
+    *)
+        add_path_to_rc "$HOME/.bashrc"
+        # also cover zsh users so this doesn't silently only work in bash
+        if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$(basename "${SHELL:-}")" == "zsh" ]] || [[ -f "$HOME/.zshrc" ]]; then
+            add_path_to_rc "$HOME/.zshrc"
+        fi
+        ;;
 esac
 
 log "ensuring default config exists"
@@ -163,6 +196,17 @@ cat <<EOF
 Done. auditsys is installed in an isolated venv at:
   $VENV_DIR
 Your system/global python packages were not modified.
+EOF
+
+if [[ "$RC_UPDATED" -eq 1 ]]; then
+    cat <<EOF
+
+$BIN_DIR was added to your PATH in your shell rc file(s).
+Run 'source ~/.bashrc' (or open a new terminal) before using audit-cli/audit-tui directly.
+EOF
+fi
+
+cat <<EOF
 
 Next steps:
   1. (root, once) sudo $SCRIPT_DIR/bin/install-audit-rules.sh

@@ -26,7 +26,13 @@ answer.
 
 Exposed via:
 - **`audit-cli`** — scriptable, filterable, pipeable (`--format json` for `jq`).
-- **`audit-tui`** — interactive browser (Textual) for poking around.
+- **`audit-tui`** — interactive browser (Textual) for poking around: a file
+  tree for blame (click a directory to auto-check it recursively, click a
+  file for its exact history), per-user activity timelines, and a
+  **Settings screen** — toggle collectors, edit watched paths, retention,
+  docker verbosity, and report output dir right there; Save applies it to
+  the running session immediately and writes it to your config file so it
+  survives restart too.
 - **`audit-cli report`** — generates a file: a self-contained **interactive
   HTML** report (click a chart bar or an actor name to filter the table, no
   external JS/CDN dependency so it works on an air-gapped box), or **CSV/JSON**
@@ -42,8 +48,8 @@ Exposed via:
 #    (this is the fix for "who ran the command that nuked everything")
 sudo ./bin/install-audit-rules.sh
 
-# 3. Pull in events
-audit-cli sync
+# 3. Pull in events (needs root for full coverage — see Permissions below)
+sudo audit-cli sync
 
 # 4. Ask questions
 audit-cli blame /etc/nginx/nginx.conf
@@ -63,6 +69,44 @@ Each server is queried independently (per your setup) — run the same
 central aggregation server in this version; `report --format json` on each
 host gives you a consistent, diffable export if you want to eyeball
 multiple hosts side by side.
+
+## Permissions
+
+`audit-cli sync` (and the systemd timer, which already runs as root) needs
+**root** for full coverage:
+
+- `ausearch`/`auditctl` (the `auditd` collector) refuse to run as a normal
+  user — without root, that collector silently reports 0 events every time,
+  with no error, which is worse than an obvious failure.
+- The docker socket (`/run/docker.sock`) is normally root-only unless your
+  user is in the `docker` group — without access, the `docker` collector
+  reports unavailable.
+- `journalctl` and the `stat` fallback work fine unprivileged, so
+  `audit-cli blame`/`sudo`/`docker`/`who` (read-only queries against the
+  already-synced store) don't need root at all — only `sync` does.
+
+If a collector reports "unavailable," check whether the *reason* is a
+permissions problem (run `sync` under `sudo`) or something else — e.g.
+`docker: ... no such file or directory` means the docker daemon itself
+isn't running (`sudo systemctl start docker`), not a permissions issue;
+`sudo` won't fix that one.
+
+**Gotcha:** because `sync` needs root but the query commands don't, running
+`sudo audit-cli sync` and plain `audit-cli blame ...` can silently read/write
+*two different databases* — the store path auto-picks `/var/lib/auditsys/`
+when run as root vs `~/.local/share/auditsys/` otherwise, and `sudo` resets
+`$HOME` to root's on some distros (including Arch-based ones), which also
+changes which config file gets loaded. If `sudo` and non-`sudo` runs seem to
+disagree about what's in the store, this is almost always why. Fix it once
+and for all by setting an explicit, invocation-invariant path in your config:
+
+```yaml
+store:
+  path: /var/lib/auditsys/audit.db   # always this file, regardless of who runs the command
+```
+
+(and make sure whichever user runs read-only queries can actually read that
+path — `chmod`/group ownership as appropriate.)
 
 ## Architecture
 

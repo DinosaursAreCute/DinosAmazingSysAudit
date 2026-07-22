@@ -1,6 +1,6 @@
 [project]
 name = "auditsys"
-version = "0.1.0"
+version = "0.2.0"
 description = "Modular system audit / blame tool: file & sudo & docker attribution over auditd/journalctl, CLI + TUI + interactive HTML/CSV/JSON reports."
 requires-python = ">=3.9"
 dependencies = [

@@ -268,7 +268,7 @@ def config_show(ctx: click.Context) -> None:
 @config.command(name="init")
 @click.option("--path", default=None, help="Where to write the default config")
 def config_init(path: Optional[str]) -> None:
-    target = Path(path) if path else Path.home() / ".config" / "auditsys" / "config.yaml"
+    target = Path(path) if path else cfgmod.default_config_path()
     written = cfgmod.write_default_config(target)
     console.print(f"[green]wrote default config to[/] {written}")
 

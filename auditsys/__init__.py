@@ -5,4 +5,4 @@ single sqlite event store. CLI and TUI both query that store — neither talks
 to the raw system logs directly.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
