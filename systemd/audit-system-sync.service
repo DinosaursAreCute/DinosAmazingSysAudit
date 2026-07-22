@@ -1,0 +1,12 @@
+[Unit]
+Description=auditsys: sync audit events from auditd/journalctl/docker into local store
+After=network.target auditd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env audit-cli sync
+# Runs as root by default so it can read auditd logs; narrow this down with
+# a dedicated service user + appropriate group membership (adm/systemd-journal)
+# if your security policy requires it.
+User=root
+Nice=10

@@ -1,0 +1,26 @@
+[project]
+name = "auditsys"
+version = "0.1.0"
+description = "Modular system audit / blame tool: file & sudo & docker attribution over auditd/journalctl, CLI + TUI + interactive HTML/CSV/JSON reports."
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "textual>=0.58",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+audit-cli = "auditsys.cli:main"
+audit-tui = "auditsys.tui.app:run"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["auditsys*"]
+
+[tool.setuptools.package-data]
+auditsys = ["reports/templates/*.j2"]

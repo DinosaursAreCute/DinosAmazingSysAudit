@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# auditsys — single portable entrypoint.
+#
+# Drop this file anywhere on your PATH (e.g. ~/.local/bin/auditsys) and it
+# will locate the auditsys project source, bootstrap the isolated venv on
+# first run if it doesn't exist yet (same layout scripts/install.sh uses),
+# and dispatch to the real audit-cli / audit-tui inside it. System python
+# packages are never touched — this is just a router.
+#
+# Usage once on PATH:
+#   auditsys sync
+#   auditsys blame /etc/nginx/nginx.conf
+#   auditsys docker --since "2026-07-22 09:00:00" --verbosity verbose
+#   auditsys tui              # opens the interactive browser
+#
+# You can also symlink this same file as `audit-cli` and/or `audit-tui` —
+# it detects which name it was invoked as and behaves accordingly:
+#   ln -s auditsys ~/.local/bin/audit-cli
+#   ln -s auditsys ~/.local/bin/audit-tui
+set -euo pipefail
+
+# --- 1. locate the auditsys project source (the extracted tarball dir) ---
+# Resolution order: $AUDITSYS_PROJECT_DIR env var, then a short list of
+# common install locations. Adjust the candidates list if you keep the
+# project somewhere else, or just export AUDITSYS_PROJECT_DIR permanently
+# in your shell rc.
+PROJECT_DIR="${AUDITSYS_PROJECT_DIR:-}"
+if [[ -z "$PROJECT_DIR" ]]; then
+    for candidate in \
+        "$HOME/audit-system" \
+        "/opt/audit-system" \
+        "/usr/local/src/audit-system" \
+        "/usr/local/share/audit-system"
+    do
+        if [[ -f "$candidate/pyproject.toml" ]]; then
+            PROJECT_DIR="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$PROJECT_DIR" || ! -f "$PROJECT_DIR/pyproject.toml" ]]; then
+    echo "auditsys: can't find the project source (looking for pyproject.toml)." >&2
+    echo "Export AUDITSYS_PROJECT_DIR=/path/to/audit-system and try again." >&2
+    exit 1
+fi
+
+# --- 2. locate (or bootstrap) the isolated venv ---
+# Same default layout as scripts/install.sh, so running that script first
+# and just using this wrapper afterwards both land on the same venv.
+if [[ "$(id -u)" -eq 0 ]]; then
+    VENV_DIR="${AUDITSYS_VENV_DIR:-/opt/auditsys/venv}"
+else
+    VENV_DIR="${AUDITSYS_VENV_DIR:-$HOME/.local/share/auditsys/venv}"
+fi
+
+if [[ ! -x "$VENV_DIR/bin/audit-cli" ]]; then
+    echo "[auditsys] first run — bootstrapping isolated venv at $VENV_DIR" >&2
+    python3 -m venv "$VENV_DIR"
+    "$VENV_DIR/bin/pip" install --upgrade pip --quiet
+    "$VENV_DIR/bin/pip" install "$PROJECT_DIR"
+    "$VENV_DIR/bin/audit-cli" config init >&2 || true
+fi
+
+# --- 3. dispatch ---
+# Invoked-name detection (for `audit-cli`/`audit-tui` symlinks) takes
+# priority; otherwise fall back to a `tui` subcommand on the generic name.
+invoked_as="$(basename "$0")"
+case "$invoked_as" in
+    audit-tui) exec "$VENV_DIR/bin/audit-tui" "$@" ;;
+    audit-cli) exec "$VENV_DIR/bin/audit-cli" "$@" ;;
+    *)
+        case "${1:-}" in
+            tui) shift; exec "$VENV_DIR/bin/audit-tui" "$@" ;;
+            *)   exec "$VENV_DIR/bin/audit-cli" "$@" ;;
+        esac
+        ;;
+esac

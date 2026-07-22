@@ -1,0 +1,39 @@
+# Copy to one of:
+#   ./audit-system.yaml
+#   ~/.config/auditsys/config.yaml
+#   /etc/audit-system/config.yaml
+# or point $AUDITSYS_CONFIG at a custom path.
+# Any field you omit falls back to the built-in default.
+
+store:
+  path: null            # null = auto (per-user or /var/lib/auditsys if root)
+  retention_days: 90
+
+collectors:
+  auditd:
+    enabled: true
+  journalctl:
+    enabled: true
+  docker:
+    enabled: true
+    verbosity: normal    # minimal | normal | verbose
+    correlate_logs: true
+  stat:
+    enabled: true
+
+# Paths auditsys ensures auditd watch rules exist for, via
+# bin/install-audit-rules.sh. Anything not in this list falls back to the
+# low-confidence `stat` collector.
+watched_paths:
+  - /etc
+  - /usr/bin/docker
+  - /usr/bin/docker-compose
+  - /run/docker.sock
+  - /var/lib/docker
+
+report:
+  formats: [html, csv, json]
+  output_dir: null       # null = auto (~/.local/share/auditsys/reports or /var/log/auditsys/reports)
+
+timezone: local
+host_label: null          # override hostname shown in reports; null = os hostname

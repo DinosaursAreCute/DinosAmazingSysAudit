@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --border:#2a2e37; --text:#e6e8eb; --muted:#9aa1ab;
+          --accent:#4da3ff; --warn:#ffb454; --ok:#57c785; --danger:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding: 20px 28px; border-bottom:1px solid var(--border); }
+  header h1 { margin:0 0 4px 0; font-size:20px; }
+  header .meta { color:var(--muted); font-size:13px; }
+  main { padding: 20px 28px 60px; max-width: 1400px; margin: 0 auto; }
+  .coverage-box { background:#241c10; border:1px solid var(--warn); border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:13px; }
+  .coverage-box b { color: var(--warn); }
+  .cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:20px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 18px; min-width:140px; }
+  .card .num { font-size:24px; font-weight:600; }
+  .card .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .charts { display:flex; gap:20px; flex-wrap:wrap; margin-bottom:24px; }
+  .chart-box { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; flex:1; min-width:320px; }
+  .chart-box h3 { margin:0 0 10px 0; font-size:14px; color:var(--muted); font-weight:500; }
+  canvas { width:100%; height:180px; cursor:pointer; }
+  .filters { display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
+  .filters input, .filters select { background:var(--panel); color:var(--text); border:1px solid var(--border);
+    border-radius:6px; padding:7px 10px; font-size:13px; }
+  .filters input[type=text] { flex:1; min-width:200px; }
+  .filters button { background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px;
+    padding:7px 12px; cursor:pointer; font-size:12px; }
+  .filters button:hover { border-color: var(--accent); }
+  table { width:100%; border-collapse: collapse; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); font-size:12.5px; }
+  th { cursor:pointer; user-select:none; color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
+  th:hover { color: var(--accent); }
+  tr:hover td { background:#1d212b; }
+  .link-cell { color:var(--accent); cursor:pointer; text-decoration:underline dotted; }
+  .badge { padding:2px 7px; border-radius:10px; font-size:11px; }
+  .b-sudo { background:#2a2140; color:#b79bff; }
+  .b-file { background:#173225; color:var(--ok); }
+  .b-docker { background:#173040; color:var(--accent); }
+  .b-auth { background:#332614; color:var(--warn); }
+  .count { color:var(--muted); font-size:12px; margin:8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{ title }}</h1>
+  <div class="meta">Generated {{ generated_at }} · {{ event_count }} events</div>
+</header>
+<main>
+  <div class="coverage-box">
+    <b>Coverage — read before drawing conclusions:</b>
+    <div id="coverage-list"></div>
+  </div>
+
+  <div class="cards" id="summary-cards"></div>
+
+  <div class="charts">
+    <div class="chart-box"><h3>Events by category</h3><canvas id="chart-category"></canvas></div>
+    <div class="chart-box"><h3>Events by actor (top 10)</h3><canvas id="chart-actor"></canvas></div>
+  </div>
+
+  <div class="filters">
+    <input type="text" id="search" placeholder="Search actor / target / detail...">
+    <select id="filter-category"><option value="">All categories</option></select>
+    <select id="filter-action"><option value="">All actions</option></select>
+    <button id="clear-filters">Clear filters</button>
+    <span class="count" id="result-count"></span>
+  </div>
+
+  <table id="events-table">
+    <thead>
+      <tr>
+        <th data-key="ts">Time</th>
+        <th data-key="source">Source</th>
+        <th data-key="category">Category</th>
+        <th data-key="action">Action</th>
+        <th data-key="actor">Actor</th>
+        <th data-key="target">Target</th>
+      </tr>
+    </thead>
+    <tbody id="events-tbody"></tbody>
+  </table>
+</main>
+
+<script>
+const EVENTS = {{ events_json | safe }};
+const COVERAGE = {{ coverage_json | safe }};
+
+let state = { search: "", category: "", action: "", sortKey: "ts", sortDir: "desc" };
+
+function renderCoverage() {
+  const el = document.getElementById("coverage-list");
+  if (!COVERAGE.length) { el.innerHTML = "No sync has run yet."; return; }
+  el.innerHTML = COVERAGE.map(c =>
+    `<div>&bull; <b>${c.source}</b> (${c.host}): ${c.start_ts || "?"} &rarr; ${c.end_ts || "?"} — ${c.note}</div>`
+  ).join("");
+}
+
+function renderCards() {
+  const byCat = {};
+  EVENTS.forEach(e => byCat[e.category] = (byCat[e.category]||0)+1);
+  const cards = [["Total events", EVENTS.length]].concat(Object.entries(byCat));
+  document.getElementById("summary-cards").innerHTML = cards.map(([label, num]) =>
+    `<div class="card"><div class="num">${num}</div><div class="label">${label}</div></div>`
+  ).join("");
+}
+
+function drawBarChart(canvasId, data, onBarClick) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = 180 * dpr;
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = 180;
+  ctx.clearRect(0,0,w,h);
+  const entries = Object.entries(data).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const max = Math.max(1, ...entries.map(e=>e[1]));
+  const barW = w / entries.length;
+  const bars = [];
+  entries.forEach(([label, val], i) => {
+    const barH = (val / max) * (h - 40);
+    const x = i * barW + 6, y = h - barH - 24, bw = barW - 12;
+    ctx.fillStyle = "#4da3ff";
+    ctx.fillRect(x, y, bw, barH);
+    ctx.fillStyle = "#9aa1ab";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "center";
+    const trimmed = label.length > 10 ? label.slice(0,9)+"…" : label;
+    ctx.fillText(trimmed, x + bw/2, h - 8);
+    ctx.fillText(String(val), x + bw/2, y - 4);
+    bars.push({x, y, w: bw, h: barH, label});
+  });
+  canvas.onclick = (ev) => {
+    const rect2 = canvas.getBoundingClientRect();
+    const cx = ev.clientX - rect2.left, cy = ev.clientY - rect2.top;
+    for (const b of bars) {
+      if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= h - 24) {
+        onBarClick(b.label);
+        return;
+      }
+    }
+  };
+}
+
+function renderCharts() {
+  const byCat = {}; EVENTS.forEach(e => byCat[e.category] = (byCat[e.category]||0)+1);
+  const byActor = {}; EVENTS.forEach(e => { const a = e.actor || "(unknown)"; byActor[a] = (byActor[a]||0)+1; });
+  drawBarChart("chart-category", byCat, (label) => { state.category = label; syncFilterInputs(); render(); });
+  drawBarChart("chart-actor", byActor, (label) => { state.search = label === "(unknown)" ? "" : label; syncFilterInputs(); render(); });
+}
+
+function populateSelects() {
+  const cats = [...new Set(EVENTS.map(e=>e.category))].sort();
+  const actions = [...new Set(EVENTS.map(e=>e.action))].sort();
+  const catSel = document.getElementById("filter-category");
+  const actSel = document.getElementById("filter-action");
+  cats.forEach(c => catSel.innerHTML += `<option value="${c}">${c}</option>`);
+  actions.forEach(a => actSel.innerHTML += `<option value="${a}">${a}</option>`);
+}
+
+function syncFilterInputs() {
+  document.getElementById("search").value = state.search;
+  document.getElementById("filter-category").value = state.category;
+  document.getElementById("filter-action").value = state.action;
+}
+
+function badge(category) {
+  return `<span class="badge b-${category}">${category}</span>`;
+}
+
+function renderTable() {
+  let rows = EVENTS.filter(e => {
+    if (state.category && e.category !== state.category) return false;
+    if (state.action && e.action !== state.action) return false;
+    if (state.search) {
+      const hay = `${e.actor||""} ${e.target||""} ${JSON.stringify(e.detail||{})}`.toLowerCase();
+      if (!hay.includes(state.search.toLowerCase())) return false;
+    }
+    return true;
+  });
+  rows.sort((a,b) => {
+    const av = a[state.sortKey] || "", bv = b[state.sortKey] || "";
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return state.sortDir === "asc" ? cmp : -cmp;
+  });
+  document.getElementById("result-count").textContent = `${rows.length} / ${EVENTS.length} events`;
+  const tbody = document.getElementById("events-tbody");
+  tbody.innerHTML = rows.slice(0, 2000).map(e => `
+    <tr>
+      <td>${e.ts}</td>
+      <td>${e.source}</td>
+      <td>${badge(e.category)}</td>
+      <td>${e.action}</td>
+      <td class="link-cell" data-actor="${(e.actor||"").replace(/"/g,'&quot;')}">${e.actor || "-"}</td>
+      <td title="${(e.target||"").replace(/"/g,'&quot;')}">${(e.target||"-").slice(0,90)}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll(".link-cell").forEach(td => {
+    td.onclick = () => { state.search = td.dataset.actor; syncFilterInputs(); render(); };
+  });
+}
+
+function render() { renderTable(); }
+
+document.getElementById("search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
+document.getElementById("filter-category").addEventListener("change", (e) => { state.category = e.target.value; render(); });
+document.getElementById("filter-action").addEventListener("change", (e) => { state.action = e.target.value; render(); });
+document.getElementById("clear-filters").addEventListener("click", () => {
+  state = { search:"", category:"", action:"", sortKey:"ts", sortDir:"desc" };
+  syncFilterInputs(); render();
+});
+document.querySelectorAll("th[data-key]").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+    else { state.sortKey = key; state.sortDir = "asc"; }
+    render();
+  });
+});
+
+renderCoverage();
+renderCards();
+renderCharts();
+populateSelects();
+render();
+window.addEventListener("resize", renderCharts);
+</script>
+</body>
+</html>
